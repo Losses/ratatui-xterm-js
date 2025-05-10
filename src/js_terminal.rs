@@ -13,7 +13,7 @@ use xterm_js_rs::addons::webgl::WebglAddon;
 
 thread_local! {
     static TERMINAL: OnceCell<xterm_js_rs::Terminal> = const { OnceCell::new() };
-    static FIT_ADDON: OnceCell<Option<FitAddon>> = const { OnceCell::new() };
+    static FIT_ADDON: OnceCell<Option<wasm_bindgen::JsValue>> = const { OnceCell::new() };
     static RESIZE_CALLBACK: OnceCell<Closure<dyn FnMut()>> = const { OnceCell::new() };
     static USE_FIT: OnceCell<bool> = const { OnceCell::new() };
 }
@@ -47,7 +47,10 @@ pub(crate) fn with_fit_addon<F, T>(f: F) -> Option<T> where F: FnOnce(&FitAddon)
             .get()
             .unwrap()
             .as_ref()
-            .map(|fit_addon| f(fit_addon))
+            .map(|fit_addon_js| {
+                let fit_addon = fit_addon_js.clone().unchecked_into::<FitAddon>();
+                f(&fit_addon)
+            })
     })
 }
 
@@ -121,12 +124,12 @@ pub fn init_terminal(
             let fit_addon = FitAddon::new();
 
             FIT_ADDON.with(|fa| {
-                if fa.set(Some(fit_addon.clone())).is_err() {
+                if fa.set(Some(fit_addon.clone().into())).is_err() {
                     panic!("Failed to set FIT_ADDON");
                 }
             });
 
-            terminal.load_addon(fit_addon.dyn_into::<FitAddon>().unwrap().into());
+            terminal.load_addon(fit_addon.into());
         } else {
             FIT_ADDON.with(|fa| {
                 if fa.set(None).is_err() {
@@ -138,13 +141,12 @@ pub fn init_terminal(
         // Load WebGL addon based on configuration
         if config.use_webgl {
             let webgl_addon = WebglAddon::new(Some(true));
-            terminal.load_addon(webgl_addon.dyn_into::<WebglAddon>().unwrap().into());
+            terminal.load_addon(webgl_addon.into());
         }
 
         terminal.open(parent);
         terminal.focus();
 
-        // Apply fit if enabled
         if config.use_fit {
             with_fit_addon(|addon| {
                 addon.fit();
@@ -155,7 +157,6 @@ pub fn init_terminal(
             panic!("Failed to set TERMINAL");
         }
 
-        // Set up resize listener if fit is enabled
         if config.use_fit {
             setup_resize_listener();
         }

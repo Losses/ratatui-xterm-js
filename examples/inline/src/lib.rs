@@ -17,7 +17,7 @@ use ratatui_xterm_js::EventStream;
 #[cfg(target_arch = "wasm32")]
 use ratatui_xterm_js::xterm::Theme;
 #[cfg(target_arch = "wasm32")]
-use ratatui_xterm_js::{TerminalHandle, XtermJsBackend, init_terminal, xterm::TerminalOptions};
+use ratatui_xterm_js::{TerminalHandle, XtermJsBackend, init_terminal, TerminalConfig, xterm::TerminalOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
 use tokio::sync::mpsc;
@@ -109,6 +109,10 @@ pub async fn main() -> Result<(), JsError> {
                     .with_background("#000000"),
             ),
         elem.dyn_into().map_err(|e| JsError::new(&e.node_name()))?,
+        TerminalConfig {
+            use_fit: true, 
+            use_webgl: false,
+        }
     );
     let handle = TerminalHandle::default();
 

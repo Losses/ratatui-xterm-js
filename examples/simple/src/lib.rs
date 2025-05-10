@@ -73,6 +73,10 @@ pub async fn main() -> Result<(), JsValue> {
                     .with_background("#000000"),
             ),
         elem.dyn_into()?,
+        TerminalConfig {
+            use_fit: true, 
+            use_webgl: false,
+        }
     );
 
     let handle = TerminalHandle::default();
