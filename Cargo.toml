@@ -23,6 +23,7 @@ wasm-bindgen = "0.2.87"
 web-sys = "0.3.64"
 xterm-js-rs = { git = "https://github.com/aschey/xterm-js-rs", rev = "d97c6ab43c012068514413261024e782ea866fae", features = [
   "xterm-addon-fit",
+  "xterm-addon-webgl"
 ] }
 
 [features]
