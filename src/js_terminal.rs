@@ -13,41 +13,80 @@ use xterm_js_rs::addons::webgl::WebglAddon;
 
 thread_local! {
     static TERMINAL: OnceCell<xterm_js_rs::Terminal> = const { OnceCell::new() };
-    static FIT_ADDON: OnceCell<FitAddon> = const { OnceCell::new() };
+    static FIT_ADDON: OnceCell<Option<FitAddon>> = const { OnceCell::new() };
     static RESIZE_CALLBACK: OnceCell<Closure<dyn FnMut()>> = const { OnceCell::new() };
+    static USE_FIT: OnceCell<bool> = const { OnceCell::new() };
 }
 
 static DATA_CHANNEL: OnceLock<Mutex<mpsc::Receiver<String>>> = OnceLock::new();
+
+/// Terminal configuration options
+pub struct TerminalConfig {
+    /// Whether to use the FitAddon
+    pub use_fit: bool,
+    /// Whether to use the WebglAddon
+    pub use_webgl: bool,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            use_fit: true,
+            use_webgl: true,
+        }
+    }
+}
 
 pub(crate) fn with_terminal<F, T>(f: F) -> T where F: FnOnce(&xterm_js_rs::Terminal) -> T {
     TERMINAL.with(|t| f(t.get().unwrap()))
 }
 
-pub(crate) fn with_fit_addon<F, T>(f: F) -> T where F: FnOnce(&FitAddon) -> T {
-    FIT_ADDON.with(|addon| f(addon.get().unwrap()))
+pub(crate) fn with_fit_addon<F, T>(f: F) -> Option<T> where F: FnOnce(&FitAddon) -> T {
+    FIT_ADDON.with(|addon| {
+        addon
+            .get()
+            .unwrap()
+            .as_ref()
+            .map(|fit_addon| f(fit_addon))
+    })
 }
 
 fn setup_resize_listener() {
-    let window = web_sys::window().expect("no global window exists");
+    USE_FIT.with(|use_fit| {
+        if !*use_fit.get().unwrap() {
+            return;
+        }
 
-    let callback = Closure::wrap(
-        Box::new(move || {
-            with_fit_addon(|addon| {
-                addon.fit();
-            });
-        }) as Box<dyn FnMut()>
-    );
+        let window = web_sys::window().expect("no global window exists");
 
-    window
-        .add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())
-        .expect("failed to add resize listener");
+        let callback = Closure::wrap(
+            Box::new(move || {
+                if
+                    let Some(_) = with_fit_addon(|addon| {
+                        addon.fit();
+                    })
+                {
+                    // FitAddon successfully applied
+                }
+            }) as Box<dyn FnMut()>
+        );
 
-    RESIZE_CALLBACK.with(|rc| {
-        let _ = rc.set(callback);
+        window
+            .add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())
+            .expect("failed to add resize listener");
+
+        RESIZE_CALLBACK.with(|rc| {
+            let _ = rc.set(callback);
+        });
     });
 }
 
-pub fn init_terminal(options: &xterm_js_rs::TerminalOptions, parent: HtmlElement) {
+/// Initialize the terminal with configuration options
+pub fn init_terminal(
+    options: &xterm_js_rs::TerminalOptions,
+    parent: HtmlElement,
+    config: TerminalConfig
+) {
     TERMINAL.with(|t| {
         let (mut tx, rx) = mpsc::channel(32);
         let mut tx_ = tx.clone();
@@ -71,30 +110,55 @@ pub fn init_terminal(options: &xterm_js_rs::TerminalOptions, parent: HtmlElement
 
         DATA_CHANNEL.set(Mutex::new(rx)).unwrap();
 
-        let fit_addon = FitAddon::new();
-        let webgl_addon = WebglAddon::new(Some(true));
-
-        FIT_ADDON.with(|fa| {
-            if fa.set(fit_addon.clone().into()).is_err() {
-                panic!("Failed to set FIT_ADDON");
+        // Set up FIT_ADDON based on configuration
+        USE_FIT.with(|use_fit| {
+            if use_fit.set(config.use_fit).is_err() {
+                panic!("Failed to set USE_FIT");
             }
         });
 
-        terminal.load_addon(fit_addon.clone().dyn_into::<FitAddon>().unwrap().into());
-        terminal.load_addon(webgl_addon.clone().dyn_into::<WebglAddon>().unwrap().into());
+        if config.use_fit {
+            let fit_addon = FitAddon::new();
+
+            FIT_ADDON.with(|fa| {
+                if fa.set(Some(fit_addon.clone())).is_err() {
+                    panic!("Failed to set FIT_ADDON");
+                }
+            });
+
+            terminal.load_addon(fit_addon.dyn_into::<FitAddon>().unwrap().into());
+        } else {
+            FIT_ADDON.with(|fa| {
+                if fa.set(None).is_err() {
+                    panic!("Failed to set FIT_ADDON to None");
+                }
+            });
+        }
+
+        // Load WebGL addon based on configuration
+        if config.use_webgl {
+            let webgl_addon = WebglAddon::new(Some(true));
+            terminal.load_addon(webgl_addon.dyn_into::<WebglAddon>().unwrap().into());
+        }
 
         terminal.open(parent);
         terminal.focus();
 
-        with_fit_addon(|addon| {
-            addon.fit();
-        });
+        // Apply fit if enabled
+        if config.use_fit {
+            with_fit_addon(|addon| {
+                addon.fit();
+            });
+        }
 
         if t.set(terminal).is_err() {
             panic!("Failed to set TERMINAL");
         }
 
-        setup_resize_listener();
+        // Set up resize listener if fit is enabled
+        if config.use_fit {
+            setup_resize_listener();
+        }
     });
 }
 
@@ -127,10 +191,14 @@ pub fn cursor_position() -> io::Result<(u16, u16)> {
 }
 
 pub fn perform_fit() -> io::Result<()> {
-    with_fit_addon(|addon| {
-        addon.fit();
-    });
-    Ok(())
+    match
+        with_fit_addon(|addon| {
+            addon.fit();
+        })
+    {
+        Some(_) => Ok(()),
+        None => Err(io::Error::new(io::ErrorKind::Unsupported, "FitAddon is not enabled")),
+    }
 }
 
 #[derive(Default)]
